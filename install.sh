@@ -3,15 +3,34 @@ REPO_OWNER="lingxistudio"
 REPO_NAME="xray-ui"
 REPO_BASE="https://github.com/${REPO_OWNER}/${REPO_NAME}"
 GITHUB_API="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}"
-
-curl -sS -H "Accept: application/vnd.github.v3+json" -o "/tmp/tmp_file" "${GITHUB_API}/releases/latest"
-releases_version=($(sed 'y/,/\n/' "/tmp/tmp_file" | grep 'tag_name' | awk -F '"' '{print $4}'))
-rm /tmp/tmp_file -f
 red='\033[0;31m'
 green='\033[0;32m'
 yellow='\033[0;33m'
 bblue='\033[0;34m'
 plain='\033[0m'
+
+resolve_release_source() {
+    local candidate_owners=("lingxistudio" "qist")
+    local owner
+    for owner in "${candidate_owners[@]}"; do
+        local api_url="https://api.github.com/repos/${owner}/${REPO_NAME}/releases/latest"
+        local tag
+        tag=$(curl -fsSL -H "Accept: application/vnd.github.v3+json" "${api_url}" 2>/dev/null \
+            | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
+            | head -n 1 \
+            | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || true)
+        if [[ -n "${tag}" ]]; then
+            REPO_OWNER="${owner}"
+            REPO_BASE="https://github.com/${REPO_OWNER}/${REPO_NAME}"
+            GITHUB_API="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}"
+            releases_version="${tag}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+resolve_release_source || { echo -e "${red}无法获取 GitHub 最新发布版本，请确认仓库可访问并且已发布 release。${plain}"; exit 1; }
 
 red() { echo -e "\033[31m\033[01m$1\033[0m"; }
 green() { echo -e "\033[32m\033[01m$1\033[0m"; }
