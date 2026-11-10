@@ -1,5 +1,10 @@
 #!/bin/bash
-curl -sS -H "Accept: application/vnd.github.v3+json" -o "/tmp/tmp_file" 'https://api.github.com/repos/qist/xray-ui/releases/latest'
+REPO_OWNER="lingxistudio"
+REPO_NAME="xray-ui"
+REPO_BASE="https://github.com/${REPO_OWNER}/${REPO_NAME}"
+GITHUB_API="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}"
+
+curl -sS -H "Accept: application/vnd.github.v3+json" -o "/tmp/tmp_file" "${GITHUB_API}/releases/latest"
 releases_version=($(sed 'y/,/\n/' "/tmp/tmp_file" | grep 'tag_name' | awk -F '"' '{print $4}'))
 rm /tmp/tmp_file -f
 red='\033[0;31m'
@@ -16,7 +21,7 @@ white() { echo -e "\033[37m\033[01m$1\033[0m"; }
 readp() { read -p "$(yellow "$1")" $2; }
 remoteV=${releases_version}
 clear
-white "Github项目  ：github.com/qist/xray-ui"
+white "Github项目  ：${REPO_BASE}"
 yellow "感谢xray-ui代码贡献者们（vaxilu）"
 green "当前安装版本： $remoteV"
 yellow "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
@@ -178,7 +183,7 @@ install_xray-ui() {
     systemctl stop xray-ui
     cd /usr/local/
     if [ $# == 0 ]; then
-        wget --no-check-certificate -O /usr/local/xray-ui-linux-$(arch).tar.gz https://github.com/qist/xray-ui/releases/download/${releases_version}/xray-ui-linux-$(arch).tar.gz
+        wget --no-check-certificate -O /usr/local/xray-ui-linux-$(arch).tar.gz "${REPO_BASE}/releases/download/${releases_version}/xray-ui-linux-$(arch).tar.gz"
         if [[ $? -ne 0 ]]; then
             echo -e "${red}下载 xray-ui 失败，请确保你的服务器能够下载 Github 的文件${plain}"
             rm -f install.sh
@@ -186,7 +191,7 @@ install_xray-ui() {
         fi
     else
         last_version=$1
-        url="https://github.com/qist/xray-ui/releases/download/${releases_version}/xray-ui-linux-$(arch).tar.gz"
+        url="${REPO_BASE}/releases/download/${releases_version}/xray-ui-linux-$(arch).tar.gz"
         echo -e "开始安装 xray-ui v$1"
         wget  --no-check-certificate -O /usr/local/xray-ui-linux-$(arch).tar.gz ${url}
         if [[ $? -ne 0 ]]; then
@@ -210,7 +215,7 @@ install_xray-ui() {
     fi   
     chmod +x xray-ui bin/xray-linux-$(arch)
     cp -f xray-ui.service /etc/systemd/system/
-    wget --no-check-certificate -O /usr/bin/xray-ui https://raw.githubusercontent.com/qist/xray-ui/main/xray-ui.sh
+    wget --no-check-certificate -O /usr/bin/xray-ui "https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/main/xray-ui.sh"
     chmod +x /usr/bin/xray-ui
     systemctl daemon-reload
     systemctl enable xray-ui

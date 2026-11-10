@@ -1,424 +1,138 @@
-本项目基于上游X-UI项目进行略微的功能改动！后续将紧跟上游X-UI版本更新！在此感谢[vaxilu](https://github.com/vaxilu/x-ui)及各位为此项目做出贡献
+# xray-ui 伪装流量 + V2Ray 兼容版
 
-----------------------------------------------------------------------------------------------------------------------------------------------
-### 功能介绍
+这是一个面向实战场景的 Xray 面板增强版，专注于两点：
 
-系统状态监控
-支持多协议，网页可视化操作
-支持的协议：vmess、vless、trojan、shadowsocks、dokodemo-door、socks、http
-支持配置更多传输配置
-流量统计，限制流量，限制到期时间
-可自定义 xray 配置模板
-支持 https 访问面板（自备域名 + ssl 证书）
-更多高级配置项，详见面板
+- V2Ray 兼容：兼容传统 V2Ray / v2-ui 配置习惯，降低迁移成本
+- 伪装流量：支持把流量伪装成常见社交平台风格，例如 TikTok、微信、QQ、微博、百度等，提升遮蔽与混淆效果
 
-----------------------------------------------------------------------------------------------------------------------------------------------
+本项目在原有 xray-ui 功能基础上，加入了默认兼容配置、低资源占用优化以及流量伪装能力，适合希望更稳定、更省资源、同时保留 V2Ray 用户习惯的部署场景。
 
-本脚本显示功能更加人性化！已解决各种新老系统安装失败问题，并会长期更新，欢迎大家提建议！！
-    
-### VPS 安全加固 建议
+## 项目特色
 
-<details>
-  <summary>点击查看 VPS 安全加固 建议</summary>
+### 1. V2Ray 兼容模式
 
-1、保持内核版本更新修复内核级别漏洞 
+默认采用 V2Ray 兼容配置，适合以下用户：
 
-2、开启防火墙千万别裸奔
+- 习惯 v2ray / v2-ui / vmess 生态
+- 需要快速迁移现有配置
+- 希望保留原有面板使用习惯
 
-3、安装 Fail2ban配置 ssh nginx 自动封禁可疑 IP 地址
+默认兼容配置：
 
-4、不要使用简单密码，或者禁止使用密码登录，使用 RSA 私钥登录
+- `xrayCompatibilityProfile = v2ray`
+- `xrayTrafficMask = mixed`
 
-5、配置ssh 密码重试次数
+### 2. 伪装流量
 
-6、添加指定IP 登陆ssh 删除防火墙里面放行所以ssh 的服务 如果你自己没固定IP 使用clash 或者其它可以代理的ssh 让你vps ip 连接自己
+支持多种流量伪装模式，可直接模拟常见平台的 HTTP 请求特征：
 
-clash 规则   `- DST-PORT,22,ACCESS-DENIED`
+- `tiktok`
+- `wechat`
+- `qq`
+- `weibo`
+- `baidu`
+- `mixed`
 
-firewall 设置
+这些模式会在 Xray 配置生成时自动注入伪装头信息，增强流量“像正常社交应用流量”的效果。
 
-Ubuntu/debain 安装firewall
+### 3. 降低系统资源占用
+
+本版默认进行了资源优化：
+
+- 日志级别收敛到 warning
+- 默认关闭冗余 metrics 输出
+- 更适合低配 VPS / 小内存主机
+- 配置生成时自动注入必要的兼容与统计项
+
+### 4. 兼容 Windows 构建
+
+已补充 Windows 下的系统调用实现，解决常见的构建失败问题，便于本地开发、调试和验证。
+
+### 5. 适合一键安装
+
+项目附带 Linux 安装脚本，开箱即可安装并初始化默认配置，减少手工配置步骤。
+
+---
+
+## 适用人群
+
+- 需要兼容 V2Ray / v2-ui / vmess 的用户
+- 想在 Xray 面板中保留常见社交平台流量特征的人
+- 希望面板更稳、更轻、更容易部署的人
+- 想要使用一键脚本快速安装的人
+
+---
+
+## 一键安装
+
+Linux / VPS 一键安装：
 
 ```bash
-# 1、关闭默认 ufw
-# 停止ufw服务
-sudo systemctl stop ufw
-# 关闭开机启动
-sudo systemctl disable ufw
-# 删除ufw规则
-sudo ufw --force reset
-# 2 安装firewall
-apt update 
-apt install -y firewalld
-#重载 （在增减规则后，需要重载）
-firewall-cmd --reload
-#启动
-systemctl start firewalld
-#重启
-systemctl restart firewalld
-#设置开机启动
-systemctl enable firewalld
-#关闭开机启动
-systemctl disable firewalld
+bash <(curl -Ls https://raw.githubusercontent.com/lingxistudio/xray-ui/main/install.sh)
 ```
 
-centos/Rocky/Redhat 安装firewall
+如果你使用的是本地源码仓库，也可以直接：
 
 ```bash
-yum install -y firewalld
-#重载 （在增减规则后，需要重载）
-firewall-cmd --reload
-#启动
-systemctl start firewalld
-#重启
-systemctl restart firewalld
-#设置开机启动
-systemctl enable firewalld
-#关闭开机启动
-systemctl disable firewalld
-```
-
-```bash
-# 添加 指定ip 访问ssh 服务
-firewall-cmd --permanent --add-rich-rule='rule family=ipv4 source address=10.0.0.1/32 service name=ssh accept'
-firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="103.119.132.41/32" service name="ssh" accept'
-# 关闭 ssh 所有ip 访问 服务
-firewall-cmd --remove-service=ssh --permanent
-# 添加http https 服务
-firewall-cmd --add-service=http --permanent
-firewall-cmd --add-service=https --permanent
-# 生效配置
-firewall-cmd --reload
-# 查看规则
-firewall-cmd --list-all
-```
-</details>
-
-----------------------------------------------------------------------------------------------------------------------------------------------
-更新日志：
-
-2023.8.8 更新到最新的依赖，添加fragment 用于控制发出的 TCP 分片，在某些情况下可以欺骗审查系统，比如绕过 SNI 黑名单。[客户端配置模块参考](./media/xray.json) [官方配置文档](https://xtls.github.io/config/outbounds/freedom.html#outboundconfigurationobject)
-  
-2023.5.29 添加xray-ui crontab 命令 添加geoip更新到计划任务默认凌晨1.30执行 你可以修改 /etc/crontab文件
-
-2023.5.15 添加xray-ui geoip 更新IP库 添加数据库导入导出
-
-2023.5.6 修复cipherSuites 配置多选 把分割符号从,改成: 由于没看文档就按照常规添加的。很抱歉啊，如果一开始配置了cipherSuites 请改成auto 然后在升级并添加网卡接口可见。
-
-2023.5.4 sniffing 多选，tls cipherSuites 配置多选！
-
-2023.4.28 添加REALITY分享随机选择sni方便使用any_SNI_No_SNI配置方案
-
-2023.4.26 [添加 Nginx前置SNI分流](./Nginx前置SNI分流.md)
-
-2023.4.24 添加一键更新geoip,geosite 添加geoip,geosite 更新版本号
-
-2023.4.23 添加docker镜像
-
-### SSL证书
-
-<details>
-  <summary>点击查看SSL证书详情</summary>
-
-### ACME
-使用ACME管理SSL证书：
-
-1. 确保您的域名正确解析到服务器。
-2. 在终端中运行 `xray-ui` 命令，然后选择 `SSL证书管理`。
-3. 您将看到以下选项：
-
-   - **获取 SSL:** 获取SSL证书。
-   - **撤销证书:** 吊销现有的SSL证书。
-   - **强制续期:** 强制更新SSL证书。
-
-### Certbot
-
-安装并使用Certbot：
-
-```bash
-apt-get install certbot -y
-certbot certonly --standalone --agree-tos --register-unsafely-without-email -d yourdomain.com
-certbot renew --dry-run
-```
-
-### Cloudflare
-
-管理脚本内置了Cloudflare的SSL证书申请。要使用此脚本申请证书，您需要以下信息：
-
-- Cloudflare注册的电子邮件
-- Cloudflare全局API密钥
-- 域名必须通过Cloudflare解析到当前服务器
-
-**如何获取Cloudflare全局API密钥：**
-
-1. 在终端中运行 `xray-ui` 命令，然后选择 `Cloudflare SSL证书`。
-2. 访问链接：[Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens)。
-3. 点击“查看全局API密钥”（参见下图）：
-   ![](media/APIKey1.PNG)
-4. 您可能需要重新验证您的账户。之后将显示API密钥（参见下图）：
-   ![](media/APIKey2.png)
-
-使用时，只需输入您的 `域名`、`电子邮件` 和 `API密钥`。如下图所示：
-   ![](media/DetailEnter.png)
-
-### xray-ui 配置ssl证书
-```bash
-xray-ui  选择22
-输入证书路径跟密钥路径
-手动配置证书
-/usr/local/xray-ui/xray-ui  cert -webCert /root/cert/你的域名/fullchain.pem -webCertKey /root/cert/你的域名/privkey.pem
-清理证书不输入任何东西直接回车
-重启xray-ui
-xray-ui  选择10
-
-```
-### xray-ui 配置mTLS
-```bash
-xray-ui  选择23
-输入证书路径跟密钥路径CA路径
-手动配置证书
-/usr/local/xray-ui/xray-ui cert -webCert /root/cert/你的域名/fullchain.pem -webCertKey /root/cert/你的域名/privkey.pem -webCa /root/cert/ca.cer
-清理证书不输入任何东西直接回车
-重启xray-ui
-xray-ui  选择10
-```
-</details>
-
-### docker运行
-<details>
-  <summary>点击查看 docker运行</summary>
-
-```bash
-# juestnow/xray-ui:latest 最新版本 指定版本号docker pull juestnow/xray-ui:latest  docker pull ghcr.io/qist/xray-ui:latest
- docker run -d --net=host -v/etc/xray-ui:/etc/xray-ui  -v/root/cert:/root/cert --restart=unless-stopped --name xray-ui juestnow/xray-ui:latest
-# 查看默认账号密码
-docker exec -ti  启动的容器名 /app/xray-ui setting -show
-docker exec -ti xray-ui  /app/xray-ui setting -show
-# 设置账号密码
-docker exec -ti  启动的容器名 /app/xray-ui setting -password abcd -username abacd 
-docker exec -ti xray-ui  /app/xray-ui setting -password abcd -username abacd
-# 设置path 
-docker exec -ti  启动的容器名 /app/xray-ui setting --webBasePath aaaaddffdf
-docker exec -ti xray-ui  /app/xray-ui setting --webBasePath aaaaddffdf
-# 证书配置 
-## TLS 配置
-docker exec -ti xray-ui  /app/xray-ui  cert -webCert /root/cert/你的域名/fullchain.pem -webCertKey /root/cert/你的域名/privkey.pem
-## mTLS 配置
-docker exec -ti xray-ui  /app/xray-ui cert -webCert /root/cert/你的域名/fullchain.pem -webCertKey /root/cert/你的域名/privkey.pem -webCa /root/cert/ca.cer
-# 第一次访问
-当前面板http只支持127.0.0.1访问如果外面访问请用ssh转发或者nginx代理或者xray-ui 配置证书 选择22配置证书
-ssh 转发 客户机操作 ssh  -f -N -L 127.0.0.1:22222(ssh代理端口未使用端口):127.0.0.1:54321(xray-ui 端口) root@8.8.8.8(xray-ui 服务器ip)
-浏览器访问 http://127.0.0.1:22222(ssh代理端口未使用端口)/path(web访问路径)
-```
-</details>
-
-### 第一次访问
-
-<details>
-  <summary>点击查看 手动安装</summary>
-
-```bash
-当前面板http只支持127.0.0.1访问如果外面访问请用ssh转发或者nginx代理或者xray-ui 
-证书申请： xray-ui  选择19 或者 xray-ui ip_ssl_main 申请IP 证书
-```
-</details>
-
-2023.4.20 添加 配置文件下载本地，DB文件下载到本地，更新依赖到最新！
-
-2023.4.17 添加uTLS REALITY x25519 使用go原生生成公钥私钥
-
-2023.4.12 升级依赖模块 sockopt 可以在 REALITY TLS NONE 可用！增加REALITY分享连接shortId随机选择
-
-2023.4.11 REALITY 配置 生成 x25519 shortIds等 ！
-
-2023.4.7 添加 xray-ui x25519 生成REALITY公私钥 ！
-
-[xray-ui 面板配置 reality](./reality.md)
-
-2023.3.13 添加reality 支持 !
-
-* [reality 配置参考](./media/reality.png)
-
-2023.3.10 删除旧版XTLS配置以便支持xray1.8.0版本 旧trojan配置请关闭然后打开编辑从新保存即可正常，旧VLESS配置可能需要删除重新创建xray才能启动成功
-
-2023.1.7 添加VLESS-TCP-XTLS-Vision 支持
-
-2022.10.19 更新xray时不更新geoip.dat geosite.dat . geoip.dat geosite.dat 使用[Loyalsoldier](https://github.com/Loyalsoldier/geoip)提供版本单独更新
-
-2022.10.17 更改trojan 可以关闭tls配置可以使用nginx 对外代理
-
--------------------------------------------------------------------------------------------------------------------------------------------------
-### 手动安装
-
-<details>
-  <summary>点击查看 手动安装</summary>
-
-```bash
-# 下载 
-wget  --no-check-certificate -O /usr/local/xray-ui-linux-amd64.tar.gz https://github.com/qist/xray-ui/releases/latest/download/xray-ui-linux-amd64.tar.gz
-
-# 解压
-    cd /usr/local/
-    tar -xvf xray-ui-linux-amd64.tar.gz
-    rm xray-ui-linux-amd64.tar.gz -f
-    cd xray-ui
-    chmod +x xray-ui bin/xray-linux-amd64
-    cp -f xray-ui.service /etc/systemd/system/
-    wget --no-check-certificate -O /usr/bin/xray-ui https://raw.githubusercontent.com/qist/xray-ui/main/xray-ui.sh
-    chmod +x /usr/bin/xray-ui
-    systemctl daemon-reload
-    systemctl enable xray-ui
-    systemctl start xray-ui
-    # 设置账号密码：
-    /usr/local/xray-ui/xray-ui setting -username admin -password admin123
-    # 设置端口
-   /usr/local/xray-ui/xray-ui setting -port  5432
-```
-</details>
-
-### VPS直接运行一键脚本
-
-```bash
-bash <(curl -Ls  https://raw.githubusercontent.com/qist/xray-ui/main/install.sh)
-```
-#### 编译
-
-<details>
-  <summary>点击查看 编译</summary>
-
-本项目已改为纯 Go 依赖（无 CGO），无需安装 C 编译器，支持直接交叉编译。
-
-```bash
-git clone https://github.com/qist/xray-ui.git
-
+git clone https://github.com/lingxistudio/xray-ui.git
 cd xray-ui
-
-# 本机编译
-CGO_ENABLED=0 go build -trimpath -ldflags '-s -w -buildid=' -o xray-ui/xray-ui main.go
-
-# 交叉编译（无需安装交叉编译工具链）
-# ARM64
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags '-s -w -buildid=' -o xray-ui/xray-ui main.go
-
-# ARMv7
-CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags '-s -w -buildid=' -o xray-ui/xray-ui main.go
-
-# 386
-CGO_ENABLED=0 GOOS=linux GOARCH=386 go build -trimpath -ldflags '-s -w -buildid=' -o xray-ui/xray-ui main.go
-
-# s390x
-CGO_ENABLED=0 GOOS=linux GOARCH=s390x go build -trimpath -ldflags '-s -w -buildid=' -o xray-ui/xray-ui main.go
 ```
-</details>
 
---------------------------------------------------------------------------------------------------------------------------------------------------
-### nginx 代理设置
+---
 
-<details>
-  <summary>点击查看 反向代理配置</summary>
+## 默认行为说明
 
-```nginx
-upstream xray-ui {
-        least_conn;
-        server 127.0.0.1:54321 max_fails=3 fail_timeout=30s;
-        keepalive 1000;
-}
-server {
-    listen 443;
-    server_name xray.test.com;
-    client_max_body_size 0;
-    chunked_transfer_encoding on;
-    client_body_buffer_size 202400k;
-    client_body_in_single_buffer on;
-    add_header Strict-Transport-Security "max-age=63072000; includeSubdomains; preload" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-    add_header X-Frame-Options SAMEORIGIN always;
-    add_header X-Content-Type-Options nosniff;
-    add_header X-Frame-Options "DENY";
-    add_header Alt-Svc 'h3=":443"; ma=86400, h3-29=":443"; ma=86400';
-    ssl_certificate /apps/nginx/sslkey/test.com/fullchain.crt;
-    ssl_certificate_key /apps/nginx/sslkey/test.com/private.key;
-    ssl_buffer_size 4k;
-    ssl_protocols TLSv1.3 TLSv1.2;
-    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
-    ssl_prefer_server_ciphers on;
-    ssl_ecdh_curve X25519:P-256:P-384;
-    client_header_timeout 24h;
-    keepalive_timeout 24h;
-    location / {
-        proxy_redirect     off;
-        proxy_set_header   Host $host;
-        proxy_set_header   X-Real-IP   $remote_addr;
-        proxy_set_header   X-Forwarded-Proto $scheme;
-        proxy_set_header   X-Forwarded-For  $proxy_add_x_forwarded_for;
-        proxy_ssl_session_reuse off;
-        proxy_ssl_server_name on;
-        proxy_buffering    off;
-        proxy_connect_timeout      90;
-        proxy_send_timeout         90;
-        proxy_read_timeout         90;
-        proxy_buffer_size          4k;
-        proxy_buffers              4 32k;
-        proxy_busy_buffers_size    64k;
-        proxy_http_version 1.1;
-        proxy_set_header Accept-Encoding "";
-        proxy_pass http://xray-ui;
-        #proxy_pass_request_headers on;
-        proxy_set_header Connection "keep-alive";
-        proxy_store off;
-    }
- }
+本版默认已启用：
 
- 后端https转发配置参考：
+- 兼容模式：`v2ray`
+- 流量伪装：`mixed`
+- 日志级别：`warning`
+- 统计与 API 兼容项自动注入
 
- upstream xray-ui {
-        least_conn;
-        server 127.0.0.1:54321 max_fails=3 fail_timeout=30s;
-        keepalive 1000;
-}
-server {
-    listen 443;
-    server_name xray.test.com;
-    client_max_body_size 0;
-    chunked_transfer_encoding on;
-    client_body_buffer_size 202400k;
-    client_body_in_single_buffer on;
-    add_header Strict-Transport-Security "max-age=63072000; includeSubdomains; preload" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-    add_header X-Frame-Options SAMEORIGIN always;
-    add_header X-Content-Type-Options nosniff;
-    add_header X-Frame-Options "DENY";
-    add_header Alt-Svc 'h3=":443"; ma=86400, h3-29=":443"; ma=86400';
-    ssl_certificate /apps/nginx/sslkey/test.com/fullchain.crt;
-    ssl_certificate_key /apps/nginx/sslkey/test.com/private.key;
-    ssl_buffer_size 4k;
-    ssl_protocols TLSv1.3 TLSv1.2;
-    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
-    ssl_prefer_server_ciphers on;
-    ssl_ecdh_curve X25519:P-256:P-384;
-    client_header_timeout 24h;
-    keepalive_timeout 24h;
-    location / {
-        proxy_redirect     off;
-        proxy_set_header   Host $host;
-        proxy_set_header   X-Real-IP   $remote_addr;
-        proxy_set_header   X-Forwarded-For  $proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto $scheme;
-        proxy_ssl_session_reuse off;
-        proxy_ssl_server_name on;
-        proxy_buffering    off;
-        proxy_ssl_name xray.test.com; #证书域名
-        # 关闭对后端服务器自签名证书的验证
-        proxy_ssl_verify off;
-        proxy_connect_timeout      90;
-        proxy_send_timeout         90;
-        proxy_read_timeout         90;
-        proxy_buffer_size          4k;
-        proxy_buffers              4 32k;
-        proxy_busy_buffers_size    64k;
-        proxy_http_version 1.1;
-        proxy_set_header Accept-Encoding "";
-        proxy_pass https://xray-ui;
+也就是说，安装后无需额外配置，通常即能直接使用更接近 V2Ray 习惯的配置体验。
+
+---
+
+## 主要功能概览
+
+- 支持多协议：vmess、vless、trojan、shadowsocks、dokodemo-door、socks、http
+- 支持 web 面板管理
+- 支持流量统计、限制流量、限制到期时间
+- 支持自定义 Xray 模板
+- 支持 HTTPS / 证书 / mTLS 配置
+- 支持 geoip / geosite 更新
+- 支持 REALITY / uTLS 相关场景
+- 支持低资源运行与更稳健的默认策略
+
+---
+
+## 运行要求
+
+- Linux VPS / 服务器
+- root 权限
+- 适当的安全组 / 防火墙配置
+- 常见系统：Ubuntu / Debian / CentOS / Rocky / RedHat
+
+---
+
+## 说明
+
+本项目基于上游 X-UI / Xray-UI 生态扩展，并加入了更实战化的兼容与伪装策略，目的是让它在保留传统 V2Ray 使用习惯的同时，也更适合资源受限、环境复杂、审查敏感的部署场景。
+
+如果你想要更保守的纯 Xray 模式，也可以手动切换为 `xray` 兼容模式；如果你希望更偏“伪装流量”风格，则可切换为 `tiktok`、`wechat`、`qq`、`weibo`、`baidu` 或 `mixed`。
+
+---
+
+## 结论
+
+本版的定位不是单纯“另一个 Xray 面板”，而是：
+
+- 兼容 V2Ray 习惯
+- 具备流量伪装能力
+- 资源占用更低
+- 更适合快速部署与长期稳定运行
+
+这是一个更偏“实战、兼容、低资源、伪装流量”的 xray-ui 版本。        proxy_pass https://xray-ui;
         #proxy_pass_request_headers on;
         proxy_set_header Connection "keep-alive";
         proxy_store off;
