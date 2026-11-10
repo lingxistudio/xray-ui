@@ -3,8 +3,17 @@ name: Release xray-ui
 on:
   push:
     tags:
+      - "v*"
       - "*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag to publish, e.g. v26.10.31"
+        required: true
+        type: string
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -18,15 +27,43 @@ jobs:
           - 386
           - armv5
           - s390x
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release tag
+        id: release_tag
+        shell: bash
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="${{ github.event.inputs.version }}"
+            if [ -z "$TAG" ]; then
+              TAG="v$(date -u +%Y.%m.%d)"
+            fi
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Using release tag: $TAG"
+
+      - name: Ensure tag exists for manual release
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          TAG: ${{ steps.release_tag.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f "$TAG"
+          git push origin "$TAG" --force
 
       - name: Setup Go
-        uses: actions/setup-go@v7.0.0
+        uses: actions/setup-go@v5
         with:
-          go-version: "stable"
+          go-version-file: go.mod
 
       - name: Build xray-ui
         run: |
@@ -50,7 +87,7 @@ jobs:
             export GOARCH=s390x
           fi
           go build -o xray-release -trimpath -ldflags '-s -w -buildid=' main.go
-          
+
           mkdir xray-ui
           cp xray-release xray-ui/xray-release
           cp xray-ui.service xray-ui/xray-ui.service
@@ -58,8 +95,7 @@ jobs:
           mv xray-release xray-ui
           mkdir bin
           cd bin
-          
-          # Download dependencies
+
           Xray_URL="https://github.com/XTLS/Xray-core/releases/latest/download/"
           if [ "${{ matrix.platform }}" == "amd64" ]; then
             wget ${Xray_URL}Xray-linux-64.zip
@@ -90,24 +126,26 @@ jobs:
             unzip Xray-linux-s390x.zip
             rm -f Xray-linux-s390x.zip
           fi
+
           rm -f geoip.dat geosite.dat
           wget https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
           wget https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat
           mv xray xray-linux-${{ matrix.platform }}
           cd ../..
-          
+
       - name: Package
         run: tar -zcvf xray-ui-linux-${{ matrix.platform }}.tar.gz xray-ui
-        
+
       - name: Upload files to GH release
-        uses: svenstaro/upload-release-action@v2
+        uses: softprops/action-gh-release@v2
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ github.ref }}
-          file: xray-ui-linux-${{ matrix.platform }}.tar.gz
-          asset_name: xray-ui-linux-${{ matrix.platform }}.tar.gz
+          tag_name: ${{ steps.release_tag.outputs.tag }}
+          files: xray-ui-linux-${{ matrix.platform }}.tar.gz
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          draft: false
           prerelease: false
-          overwrite: true
-          make_latest: true
+
       - name: Release Changelog Builder
         uses: mikepenz/release-changelog-builder-action@v6
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
