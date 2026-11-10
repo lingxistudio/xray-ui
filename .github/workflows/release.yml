@@ -16,18 +16,10 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    strategy:
-      matrix:
-        platform:
-          - amd64
-          - arm64
-          - armv7
-          - armv6
-          - 386
-          - armv5
-          - s390x
+  prepare:
     runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.release_tag.outputs.tag }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -59,6 +51,25 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -f "$TAG"
           git push origin "$TAG" --force
+
+  build:
+    needs: prepare
+    strategy:
+      matrix:
+        platform:
+          - amd64
+          - arm64
+          - armv7
+          - armv6
+          - 386
+          - armv5
+          - s390x
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -139,7 +150,7 @@ jobs:
       - name: Upload files to GH release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.release_tag.outputs.tag }}
+          tag_name: ${{ needs.prepare.outputs.tag }}
           files: xray-ui-linux-${{ matrix.platform }}.tar.gz
           generate_release_notes: true
           fail_on_unmatched_files: true
