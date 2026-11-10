@@ -2,7 +2,7 @@
   "log": {
     "access": "none",
     "error": "none",
-    "loglevel": "info"
+    "loglevel": "warning"
   },
   "api": {
     "services": [
@@ -91,8 +91,5 @@
     ]
   },
   "stats": {},
-  "metrics": {
-    "tag": "metrics_out",
-    "listen": "127.0.0.1:11111"
-  }
+  "metrics": null
 }

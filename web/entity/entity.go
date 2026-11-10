@@ -27,17 +27,19 @@ type Pager struct {
 }
 
 type AllSetting struct {
-	WebListen          string `json:"webListen" form:"webListen"`
-	WebPort            int    `json:"webPort" form:"webPort"`
-	WebCertFile        string `json:"webCertFile" form:"webCertFile"`
-	WebKeyFile         string `json:"webKeyFile" form:"webKeyFile"`
-	WebCAFile          string `json:"webCAFile" form:"webCAFile"`
-	WebBasePath        string `json:"webBasePath" form:"webBasePath"`
-	TgBotEnable        bool   `json:"tgBotEnable" form:"tgBotEnable"`
-	TgBotToken         string `json:"tgBotToken" form:"tgBotToken"`
-	TgBotChatId        int    `json:"tgBotChatId" form:"tgBotChatId"`
-	TgRunTime          string `json:"tgRunTime" form:"tgRunTime"`
-	XrayTemplateConfig string `json:"xrayTemplateConfig" form:"xrayTemplateConfig"`
+	WebListen                string `json:"webListen" form:"webListen"`
+	WebPort                  int    `json:"webPort" form:"webPort"`
+	WebCertFile              string `json:"webCertFile" form:"webCertFile"`
+	WebKeyFile               string `json:"webKeyFile" form:"webKeyFile"`
+	WebCAFile                string `json:"webCAFile" form:"webCAFile"`
+	WebBasePath              string `json:"webBasePath" form:"webBasePath"`
+	TgBotEnable              bool   `json:"tgBotEnable" form:"tgBotEnable"`
+	TgBotToken               string `json:"tgBotToken" form:"tgBotToken"`
+	TgBotChatId              int    `json:"tgBotChatId" form:"tgBotChatId"`
+	TgRunTime                string `json:"tgRunTime" form:"tgRunTime"`
+	XrayTemplateConfig       string `json:"xrayTemplateConfig" form:"xrayTemplateConfig"`
+	XrayCompatibilityProfile string `json:"xrayCompatibilityProfile" form:"xrayCompatibilityProfile"`
+	XrayTrafficMask          string `json:"xrayTrafficMask" form:"xrayTrafficMask"`
 
 	TimeLocation string `json:"timeLocation" form:"timeLocation"`
 }
@@ -73,6 +75,17 @@ func (s *AllSetting) CheckValid() error {
 	if err != nil {
 		return common.NewError("xray template config invalid:", err)
 	}
+
+	profile := xray.NormalizeCompatibilityProfile(s.XrayCompatibilityProfile)
+	if profile == "" {
+		profile = xray.CompatibilityV2Ray
+	}
+	mask := xray.ParseTrafficMask(s.XrayTrafficMask)
+	if mask == "" {
+		mask = xray.TrafficMaskMixed
+	}
+	_ = profile
+	_ = mask
 
 	_, err = time.LoadLocation(s.TimeLocation)
 	if err != nil {

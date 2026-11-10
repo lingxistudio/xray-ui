@@ -104,6 +104,20 @@ func (s *XrayService) GetXrayConfig() (*xray.Config, error) {
 		inboundConfig := inbound.GenXrayInboundConfig()
 		xrayConfig.InboundConfigs = append(xrayConfig.InboundConfigs, *inboundConfig)
 	}
+
+	compatProfile, err := s.settingService.GetXrayCompatibilityProfile()
+	if err != nil {
+		compatProfile = xray.CompatibilityV2Ray
+	}
+	compatMask, err := s.settingService.GetXrayTrafficMask()
+	if err != nil {
+		compatMask = xray.TrafficMaskMixed
+	}
+
+	opts := xray.DefaultCompatibilityOptions()
+	opts.Profile = compatProfile
+	opts.TrafficMask = compatMask
+	xrayConfig.ApplyCompatibilityOptions(opts)
 	return xrayConfig, nil
 }
 

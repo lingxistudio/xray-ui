@@ -15,25 +15,28 @@ import (
 	"xray-ui/util/random"
 	"xray-ui/util/reflect_util"
 	"xray-ui/web/entity"
+	"xray-ui/xray"
 )
 
 //go:embed config.json
 var xrayTemplateConfig string
 
 var defaultValueMap = map[string]string{
-	"xrayTemplateConfig": xrayTemplateConfig,
-	"webListen":          "",
-	"webPort":            "54321",
-	"webCertFile":        "",
-	"webKeyFile":         "",
-	"webCAFile":         "",
-	"secret":             random.Seq(32),
-	"webBasePath":        "/",
-	"timeLocation":       "Asia/Shanghai",
-	"tgBotEnable":        "false",
-	"tgBotToken":         "",
-	"tgBotChatId":        "0",
-	"tgRunTime":          "",
+	"xrayTemplateConfig":       xrayTemplateConfig,
+	"xrayCompatibilityProfile": string(xray.CompatibilityV2Ray),
+	"xrayTrafficMask":          string(xray.TrafficMaskMixed),
+	"webListen":                "",
+	"webPort":                  "54321",
+	"webCertFile":              "",
+	"webKeyFile":               "",
+	"webCAFile":                "",
+	"secret":                   random.Seq(32),
+	"webBasePath":              "/",
+	"timeLocation":             "Asia/Shanghai",
+	"tgBotEnable":              "false",
+	"tgBotToken":               "",
+	"tgBotChatId":              "0",
+	"tgRunTime":                "",
 }
 
 type SettingService struct {
@@ -207,6 +210,30 @@ func (s *SettingService) GetXrayConfigTemplate() (string, error) {
 	return s.getString("xrayTemplateConfig")
 }
 
+func (s *SettingService) GetXrayCompatibilityProfile() (xray.CompatibilityProfile, error) {
+	value, err := s.getString("xrayCompatibilityProfile")
+	if err != nil {
+		return xray.CompatibilityV2Ray, err
+	}
+	return xray.NormalizeCompatibilityProfile(value), nil
+}
+
+func (s *SettingService) SetXrayCompatibilityProfile(profile string) error {
+	return s.setString("xrayCompatibilityProfile", strings.ToLower(strings.TrimSpace(profile)))
+}
+
+func (s *SettingService) GetXrayTrafficMask() (xray.TrafficMask, error) {
+	value, err := s.getString("xrayTrafficMask")
+	if err != nil {
+		return xray.TrafficMaskMixed, err
+	}
+	return xray.ParseTrafficMask(value), nil
+}
+
+func (s *SettingService) SetXrayTrafficMask(mask string) error {
+	return s.setString("xrayTrafficMask", strings.ToLower(strings.TrimSpace(mask)))
+}
+
 func (s *SettingService) GetListen() (string, error) {
 	return s.getString("webListen")
 }
@@ -313,7 +340,6 @@ func (s *SettingService) GetBasePath() (string, error) {
 	}
 	return basePath, nil
 }
-
 
 func (s *SettingService) GetTimeLocation() (*time.Location, error) {
 	l, err := s.getString("timeLocation")

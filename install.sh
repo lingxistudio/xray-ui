@@ -134,11 +134,11 @@ install_base() {
         if [[ ${os_version} =~ 8 ]]; then
             yum clean all && yum makecache
         fi
-        yum install epel-release -y && yum install wget curl tar gzip lsof -y
+        yum install epel-release -y && yum install wget curl tar gzip lsof sqlite -y
 
         setenforce 0 >/dev/null 2>&1
     else
-        apt update && apt install wget curl tar lsof gzip -y
+        apt update && apt install wget curl tar lsof gzip sqlite3 -y
     fi
 }
 generate_random_string() {
@@ -151,6 +151,27 @@ generate_random_string() {
     local random_string=$(cat /dev/urandom | tr -dc "$characters" | fold -w "$n" | head -n 1)
 
     echo "$random_string"
+}
+
+ensure_default_compatibility_settings() {
+    local db_path="/etc/xray-ui/xray-ui.db"
+    if [[ ! -f "${db_path}" ]]; then
+        yellow "xray-ui 数据库尚未初始化，跳过兼容配置写入"
+        return 0
+    fi
+    if ! command -v sqlite3 >/dev/null 2>&1; then
+        yellow "sqlite3 未安装，跳过兼容配置写入"
+        return 0
+    fi
+
+    sqlite3 "${db_path}" "
+        INSERT INTO settings (key, value) VALUES ('xrayCompatibilityProfile','v2ray')
+        ON CONFLICT(key) DO UPDATE SET value='v2ray';
+        INSERT INTO settings (key, value) VALUES ('xrayTrafficMask','mixed')
+        ON CONFLICT(key) DO UPDATE SET value='mixed';
+    " 2>/dev/null || true
+
+    green "已设置默认兼容模式：V2Ray + mixed 流量伪装"
 }
 
 install_xray-ui() {
@@ -256,6 +277,7 @@ EOF
     green "xray-ui web 路径：${path}"
     sleep 1
     xray-ui restart
+    ensure_default_compatibility_settings
    }
     xuilogin() {
         v4=$(curl -s4m8 http://ip.sb -k)
