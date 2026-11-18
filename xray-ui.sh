@@ -990,6 +990,219 @@ ssl_cert_issue_CF() {
     fi
 }
 
+# nginx 一键反代：把面板通过 HTTPS 暴露到外网
+#   NGINX_PROXY=1 免交互执行；NGINX_HTTP_PORT/NGINX_HTTPS_PORT/NGINX_SERVER_NAME 可覆盖默认值
+nginx_proxy() {
+    local http_port="${NGINX_HTTP_PORT:-8080}"
+    local https_port="${NGINX_HTTPS_PORT:-8443}"
+    local server_name="${NGINX_SERVER_NAME:-}"
+    local db_path="/etc/xray-ui/xray-ui.db"
+    local cert_dir="/etc/nginx/ssl"
+    local cert="${cert_dir}/panel.crt"
+    local key="${cert_dir}/panel.key"
+    local conf_file=""
+    local panel_port=""
+    local panel_path=""
+    local panel_listen=""
+    local upstream="127.0.0.1"
+    local pub_ip=""
+
+    if [[ x"${NGINX_PROXY}" == x"0" ]]; then
+        yellow "已跳过 nginx 反代配置（NGINX_PROXY=0）"
+        return 0
+    fi
+    if [[ x"${NGINX_PROXY}" != x"1" ]]; then
+        read -p "$(yellow "是否用 nginx 一键把面板暴露到外网(HTTPS)？输入Y/y执行，N/n跳过: ")" npx
+        if [[ ! $npx = [Yy] ]]; then
+            yellow "已跳过 nginx 反代配置"
+            return 0
+        fi
+    fi
+
+    if command -v sqlite3 >/dev/null 2>&1 && [[ -f "${db_path}" ]]; then
+        panel_port=$(sqlite3 "${db_path}" "SELECT value FROM settings WHERE key='webPort' LIMIT 1;" 2>/dev/null)
+        panel_path=$(sqlite3 "${db_path}" "SELECT value FROM settings WHERE key='webBasePath' LIMIT 1;" 2>/dev/null)
+        panel_listen=$(sqlite3 "${db_path}" "SELECT value FROM settings WHERE key='webListen' LIMIT 1;" 2>/dev/null)
+    fi
+    [[ -z "${panel_port}" ]] && panel_port=$(/usr/local/xray-ui/xray-ui 2>&1 | grep tcp | awk '{print $5}' | sed 's/://g')
+    if [[ -z "${panel_port}" ]]; then
+        echo -e "${red}无法获取面板端口，跳过 nginx 反代配置${plain}"
+        return 1
+    fi
+    [[ -z "${panel_path}" ]] && panel_path="/"
+    panel_path="${panel_path#/}"
+    panel_path="${panel_path%/}"
+
+    case "${panel_listen}" in
+    "" | "0.0.0.0" | "::") upstream="127.0.0.1" ;;
+    *) upstream="${panel_listen}" ;;
+    esac
+
+    if ! command -v nginx >/dev/null 2>&1; then
+        green "正在安装 nginx ..."
+        if command -v dnf >/dev/null 2>&1; then
+            dnf install -y nginx
+        elif command -v yum >/dev/null 2>&1; then
+            yum install -y nginx
+        elif command -v apt >/dev/null 2>&1; then
+            apt update -qq >/dev/null 2>&1
+            DEBIAN_FRONTEND=noninteractive apt install -y nginx >/dev/null 2>&1
+        fi
+    fi
+    if ! command -v nginx >/dev/null 2>&1; then
+        echo -e "${red}nginx 安装失败，跳过 nginx 反代配置${plain}"
+        return 1
+    fi
+
+    _port_in_use() { ss -tln 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]$1\$"; }
+    _owned_by_nginx() { ss -tlnp 2>/dev/null | grep -E "[:.]$1[[:space:]]" | grep -q nginx; }
+    _pick_port() {
+        local p=$1 n=0
+        while _port_in_use "$p" && ! _owned_by_nginx "$p"; do
+            p=$((p + 1))
+            n=$((n + 1))
+            if [[ $n -ge 50 ]]; then
+                return 1
+            fi
+        done
+        echo "$p"
+    }
+    local new_http new_https
+    new_http=$(_pick_port "${http_port}")
+    if [[ -z "${new_http}" ]]; then
+        echo -e "${red}找不到空闲的 HTTP 反代端口，跳过${plain}"
+        return 1
+    fi
+    new_https=$(_pick_port "${https_port}")
+    if [[ -z "${new_https}" ]]; then
+        echo -e "${red}找不到空闲的 HTTPS 反代端口，跳过${plain}"
+        return 1
+    fi
+    if [[ "${new_http}" != "${http_port}" || "${new_https}" != "${https_port}" ]]; then
+        yellow "端口 ${http_port}/${https_port} 已被占用，自动改用 ${new_http}/${new_https}"
+    fi
+    http_port="${new_http}"
+    https_port="${new_https}"
+
+    mkdir -p "${cert_dir}"
+    if [[ ! -f "${cert}" || ! -f "${key}" ]]; then
+        local cn="${server_name}"
+        if [[ -z "${cn}" ]]; then
+            pub_ip=$(curl -s4m8 https://api.ipify.org 2>/dev/null || curl -s4m8 http://ip.sb -k 2>/dev/null || true)
+            cn="${pub_ip:-xray-ui}"
+        fi
+        openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
+            -keyout "${key}" -out "${cert}" \
+            -subj "/CN=${cn}/O=xray-ui-panel" >/dev/null 2>&1
+        chmod 600 "${key}"
+        green "已生成自签名证书：${cert}（有效期 3650 天）"
+    fi
+
+    local tpl
+    tpl=$(cat <<'NGINXTPL'
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen __HTTP_PORT__;
+    server_name _;
+    return 301 https://$host:__HTTPS_PORT__$request_uri;
+}
+
+server {
+    listen __HTTPS_PORT__ ssl;
+    server_name _;
+
+    ssl_certificate     __CERT__;
+    ssl_certificate_key __KEY__;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    client_max_body_size 100m;
+
+    location / {
+        proxy_pass http://__UPSTREAM__:__PANEL_PORT__;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_buffering off;
+    }
+}
+NGINXTPL
+    )
+    tpl=${tpl//__HTTP_PORT__/${http_port}}
+    tpl=${tpl//__HTTPS_PORT__/${https_port}}
+    tpl=${tpl//__CERT__/${cert}}
+    tpl=${tpl//__KEY__/${key}}
+    tpl=${tpl//__UPSTREAM__/${upstream}}
+    tpl=${tpl//__PANEL_PORT__/${panel_port}}
+
+    if [[ -d /etc/nginx/sites-available ]]; then
+        conf_file="/etc/nginx/sites-available/panel.conf"
+        echo "${tpl}" >"${conf_file}"
+        mkdir -p /etc/nginx/sites-enabled
+        rm -f /etc/nginx/sites-enabled/default
+        ln -sf "${conf_file}" /etc/nginx/sites-enabled/panel.conf
+    else
+        conf_file="/etc/nginx/conf.d/panel.conf"
+        echo "${tpl}" >"${conf_file}"
+    fi
+
+    if ! nginx -t >/dev/null 2>&1; then
+        echo -e "${red}nginx 配置校验失败，输出如下：${plain}"
+        nginx -t
+        return 1
+    fi
+
+    systemctl enable nginx >/dev/null 2>&1 || true
+    systemctl restart nginx
+    sleep 1
+    if [[ $(systemctl is-active nginx 2>/dev/null) != "active" ]]; then
+        echo -e "${red}nginx 启动失败，请运行 nginx -t 检查${plain}"
+        return 1
+    fi
+
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+        ufw allow "${http_port}/tcp" >/dev/null 2>&1 || true
+        ufw allow "${https_port}/tcp" >/dev/null 2>&1 || true
+    fi
+    if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+        firewall-cmd --permanent --add-port="${http_port}/tcp" >/dev/null 2>&1 || true
+        firewall-cmd --permanent --add-port="${https_port}/tcp" >/dev/null 2>&1 || true
+        firewall-cmd --reload >/dev/null 2>&1 || true
+    fi
+
+    local code
+    code=$(curl -sk -m 8 -o /dev/null -w '%{http_code}' "https://127.0.0.1:${https_port}/${panel_path}/" 2>/dev/null)
+    [[ -z "${pub_ip}" ]] && pub_ip=$(curl -s4m8 https://api.ipify.org 2>/dev/null || echo "YOUR_SERVER_IP")
+
+    echo -e ""
+    green "nginx 反代配置完成"
+    echo -e "  配置文件      : ${conf_file}"
+    echo -e "  证书 / 私钥   : ${cert} / ${key}"
+    echo -e "  后端地址      : http://${upstream}:${panel_port}"
+    echo -e "  HTTP  ${http_port}   -> 301 跳转至 HTTPS"
+    echo -e "  HTTPS ${https_port}  -> 反代面板"
+    echo -e "  本机校验      : HTTP ${code:-000}"
+    echo -e ""
+    green "外网访问地址："
+    blue "  https://${pub_ip}:${https_port}/${panel_path}/"
+    yellow "首次访问浏览器会提示证书不受信任，选择「高级/继续访问」即可（自签名证书，流量已加密）"
+    if [[ "${code}" != "200" && "${code}" != "302" && "${code}" != "301" ]]; then
+        yellow "本机校验未返回 200，请确认面板已启动、端口 ${panel_port} 正确，并查看 /var/log/nginx/error.log"
+    fi
+    return 0
+}
+
 show_usage() {
     echo "xray-ui 管理脚本使用方法: "
     echo "------------------------------------------"
@@ -1011,6 +1224,7 @@ show_usage() {
     echo "xray-ui ip_ssl_main  - ip SSL 证书安装"
     echo "xray-ui ssl_CF       - Cloudflare SSL 证书"
     echo "xray-ui crontab      - 添加geoip到任务计划每天凌晨1.30执行"
+    echo "xray-ui nginx_proxy  - nginx 一键反代面板到外网"
     echo "xray-ui uninstall    - 卸载 xray-ui 面板"
     echo "------------------------------------------"
 }
@@ -1047,6 +1261,7 @@ show_menu() {
   ${green}21.${plain} 重置web 路径
   ${green}22.${plain} 重置ssl证书
   ${green}23.${plain} 重置mTLS证书
+  ${green}24.${plain} nginx 反代面板到外网
  "
     show_status
     echo "------------------------------------------"
@@ -1069,7 +1284,7 @@ show_menu() {
         yellow "检测到最新版本：${remoteV} ，可选择2进行更新！"
     fi
 
-    echo && read -p "请输入选择 [0-23]: " num
+    echo && read -p "请输入选择 [0-24]: " num
 
     case "${num}" in
     0)
@@ -1144,8 +1359,11 @@ show_menu() {
     23)
         check_install && reset_mTLS
         ;;
+    24)
+        check_install && nginx_proxy
+        ;;
     *)
-        echo -e "${red}请输入正确的数字 [0-23]${plain}"
+        echo -e "${red}请输入正确的数字 [0-24]${plain}"
         ;;
     esac
 }
@@ -1193,6 +1411,9 @@ if [[ $# > 0 ]]; then
         ;;
     "crontab")
         crontab 0
+        ;;
+    "nginx_proxy")
+        nginx_proxy
         ;;
     "ssl_main")
         ssl_cert_issue_main
