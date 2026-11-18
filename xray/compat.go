@@ -16,6 +16,7 @@ const (
 type TrafficMask string
 
 const (
+	TrafficMaskNone  TrafficMask = "none"
 	TrafficMaskTikTok TrafficMask = "tiktok"
 	TrafficMaskWeChat TrafficMask = "wechat"
 	TrafficMaskQQ     TrafficMask = "qq"
@@ -35,7 +36,7 @@ type CompatibilityOptions struct {
 func DefaultCompatibilityOptions() CompatibilityOptions {
 	return CompatibilityOptions{
 		Profile:         CompatibilityV2Ray,
-		TrafficMask:     TrafficMaskMixed,
+		TrafficMask:     TrafficMaskNone,
 		EnableStats:     true,
 		EnableAPI:       true,
 		MemoryOptimized: true,
@@ -63,10 +64,13 @@ func ParseTrafficMask(raw string) TrafficMask {
 		return TrafficMaskWeibo
 	case "baidu":
 		return TrafficMaskBaidu
-	case "mixed", "all", "":
+	case "mixed", "all":
 		return TrafficMaskMixed
+	case "none", "off", "false", "":
+		return TrafficMaskNone
 	default:
-		return TrafficMaskMixed
+		// 未知值一律不伪装，避免分享链接客户端握手失败
+		return TrafficMaskNone
 	}
 }
 
@@ -78,7 +82,7 @@ func (cfg *Config) ApplyCompatibilityOptions(opts CompatibilityOptions) {
 		opts.Profile = CompatibilityV2Ray
 	}
 	if opts.TrafficMask == "" {
-		opts.TrafficMask = TrafficMaskMixed
+		opts.TrafficMask = TrafficMaskNone
 	}
 	if opts.EnableStats == false && opts.Profile == CompatibilityV2Ray {
 		opts.EnableStats = true
@@ -121,11 +125,15 @@ func (cfg *Config) ApplyCompatibilityOptions(opts CompatibilityOptions) {
 
 	for i := range cfg.InboundConfigs {
 		inbound := &cfg.InboundConfigs[i]
+		// 统计 API 入站仅监听回环，不参与流量伪装，否则会导致内核配置加载失败
+		if inbound.Tag == "api" || inbound.Protocol == "dokodemo-door" {
+			continue
+		}
 		if len(inbound.Sniffing) == 0 {
 			inbound.Sniffing = json_util.RawMessage(`{"enabled":true,"destOverride":["http","tls","fakedns"]}`)
 		}
-		if len(inbound.StreamSettings) == 0 || string(inbound.StreamSettings) == "null" {
-			inbound.StreamSettings = json_util.RawMessage(buildTrafficMaskStreamSettings(opts.TrafficMask))
+		if merged, ok := mergeTrafficMaskStreamSettings(inbound.StreamSettings, opts.TrafficMask); ok {
+			inbound.StreamSettings = merged
 		}
 	}
 
@@ -134,33 +142,65 @@ func (cfg *Config) ApplyCompatibilityOptions(opts CompatibilityOptions) {
 	}
 }
 
-func buildTrafficMaskStreamSettings(mask TrafficMask) string {
+// buildTrafficMaskTCPSettings 生成伪装成常见站点 HTTP 请求的 tcpSettings。
+// 注意：Xray 26.11+ 的 header.request.version 只接受字符串，数组会导致配置加载失败。
+func buildTrafficMaskTCPSettings(mask TrafficMask) map[string]any {
 	hosts := trafficMaskHosts(mask)
-	payload := map[string]any{
-		"network":  "tcp",
-		"security": "none",
-		"tcpSettings": map[string]any{
-			"header": map[string]any{
-				"type": "http",
-				"request": map[string]any{
-					"version": []string{"1.1"},
-					"method":  "GET",
-					"path":    []string{"/"},
-					"headers": map[string]any{
-						"Host":             hosts,
-						"User-Agent":       []string{"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"},
-						"Accept":           []string{"*/*"},
-						"Accept-Encoding":  []string{"gzip, deflate, br"},
-						"Connection":       []string{"keep-alive"},
-						"Cache-Control":    []string{"no-cache"},
-						"X-Requested-With": []string{"XMLHttpRequest"},
-					},
+	return map[string]any{
+		"header": map[string]any{
+			"type": "http",
+			"request": map[string]any{
+				"version": "1.1",
+				"method":  "GET",
+				"path":    []string{"/"},
+				"headers": map[string]any{
+					"Host":             hosts,
+					"User-Agent":       []string{"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"},
+					"Accept":           []string{"*/*"},
+					"Accept-Encoding":  []string{"gzip, deflate, br"},
+					"Connection":       []string{"keep-alive"},
+					"Cache-Control":    []string{"no-cache"},
+					"X-Requested-With": []string{"XMLHttpRequest"},
 				},
 			},
 		},
 	}
-	data, _ := json.Marshal(payload)
-	return string(data)
+}
+
+// mergeTrafficMaskStreamSettings 将伪装头合并进现有 streamSettings。
+// 仅对未加密的 TCP 入站生效（security 为空/none 且 network 为 tcp），
+// TLS/Reality/WS/gRPC/QUIC 等入站保持原样。返回 ok=false 表示不适用。
+func mergeTrafficMaskStreamSettings(existing json_util.RawMessage, mask TrafficMask) (json_util.RawMessage, bool) {
+	if mask == TrafficMaskNone {
+		// 分享链接无法携带伪装头配置，服务端单方面伪装会导致普通客户端握手失败
+		return existing, false
+	}
+	text := strings.TrimSpace(string(existing))
+	if text == "" || text == "null" {
+		text = "{}"
+	}
+	streamSettings := map[string]any{}
+	if err := json.Unmarshal([]byte(text), &streamSettings); err != nil {
+		return existing, false
+	}
+	security, _ := streamSettings["security"].(string)
+	if security != "" && security != "none" {
+		return existing, false
+	}
+	network, _ := streamSettings["network"].(string)
+	if network == "" {
+		network = "tcp"
+		streamSettings["network"] = network
+	}
+	if network != "tcp" {
+		return existing, false
+	}
+	streamSettings["tcpSettings"] = buildTrafficMaskTCPSettings(mask)
+	data, err := json.Marshal(streamSettings)
+	if err != nil {
+		return existing, false
+	}
+	return json_util.RawMessage(data), true
 }
 
 func trafficMaskHosts(mask TrafficMask) []string {

@@ -24,7 +24,7 @@ var xrayTemplateConfig string
 var defaultValueMap = map[string]string{
 	"xrayTemplateConfig":       xrayTemplateConfig,
 	"xrayCompatibilityProfile": string(xray.CompatibilityV2Ray),
-	"xrayTrafficMask":          string(xray.TrafficMaskMixed),
+	"xrayTrafficMask":          string(xray.TrafficMaskNone),
 	"webListen":                "",
 	"webPort":                  "54321",
 	"webCertFile":              "",

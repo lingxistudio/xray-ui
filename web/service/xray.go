@@ -111,7 +111,7 @@ func (s *XrayService) GetXrayConfig() (*xray.Config, error) {
 	}
 	compatMask, err := s.settingService.GetXrayTrafficMask()
 	if err != nil {
-		compatMask = xray.TrafficMaskMixed
+		compatMask = xray.TrafficMaskNone
 	}
 
 	opts := xray.DefaultCompatibilityOptions()

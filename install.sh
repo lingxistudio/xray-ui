@@ -191,11 +191,11 @@ ensure_default_compatibility_settings() {
     sqlite3 "${db_path}" "
         INSERT INTO settings (key, value) VALUES ('xrayCompatibilityProfile','v2ray')
         ON CONFLICT(key) DO UPDATE SET value='v2ray';
-        INSERT INTO settings (key, value) VALUES ('xrayTrafficMask','mixed')
-        ON CONFLICT(key) DO UPDATE SET value='mixed';
+        INSERT INTO settings (key, value) VALUES ('xrayTrafficMask','none')
+        ON CONFLICT(key) DO UPDATE SET value='none';
     " 2>/dev/null || true
 
-    green "已设置默认兼容模式：V2Ray + mixed 流量伪装"
+    green "已设置默认兼容模式：V2Ray（默认不启用流量伪装，保证分享链接可用）"
 }
 
 install_xray-ui() {
