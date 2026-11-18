@@ -2938,7 +2938,8 @@ class Inbound extends XrayCommonClass {
         // const encryption = this.encryption;
         const params = new Map();
         params.set("type", this._shareNetworkName());
-        params.set("encryption", this.settings.encryption);
+        // encryption 必须输出合法值，为空时回落为 none，否则客户端解析会报错
+        params.set("encryption", ObjectUtil.isEmpty(settings.encryption) ? "none" : settings.encryption);
         if (this.reality) {
             params.set("security", "reality");
         } else {
@@ -3586,8 +3587,8 @@ Inbound.VLESSSettings = class extends Inbound.Settings {
         return new Inbound.VLESSSettings(
             Protocols.VLESS,
             json.clients.map(client => Inbound.VLESSSettings.VLESS.fromJson(client)),
-            json.decryption,
-            json.encryption,
+            ObjectUtil.isEmpty(json.decryption) ? 'none' : json.decryption,
+            ObjectUtil.isEmpty(json.encryption) ? 'none' : json.encryption,
             Inbound.VLESSSettings.Fallback.fromJson(json.fallbacks),
             json.selectedAuth,
             testseed,
