@@ -1,4 +1,12 @@
 #!/bin/bash
+# ================= 仓库与更新检查配置 =================
+REPO_OWNER="${REPO_OWNER:-lingxistudio}"
+REPO_NAME="${REPO_NAME:-xray-ui}"
+REPO_BASE="https://github.com/${REPO_OWNER}/${REPO_NAME}"
+REPO_RAW="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/main"
+GITHUB_API="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}"
+UPDATE_CHECK_CACHE="/tmp/.xray-ui_remote_tag"
+UPDATE_CHECK_TTL=3600
 red='\033[0;31m'
 green='\033[0;32m'
 yellow='\033[0;33m'
@@ -119,7 +127,7 @@ before_show_menu() {
 }
 
 install() {
-    wget -N https://raw.githubusercontent.com/qist/xray-ui/main/install.sh && bash install.sh
+    wget -N "${REPO_RAW}/install.sh" && bash install.sh
     if [[ $? == 0 ]]; then
         if [[ $# == 0 ]]; then
             start
@@ -157,13 +165,17 @@ update() {
         setenforce 0 >/dev/null 2>&1
     fi
     systemctl stop xray-ui
-    curl -sS -H "Accept: application/vnd.github.v3+json" -o "/tmp/tmp_file" 'https://api.github.com/repos/qist/xray-ui/releases/latest'
-    releases_version=($(sed 'y/,/\n/' "/tmp/tmp_file" | grep 'tag_name' | awk -F '"' '{print $4}'))
-    rm /tmp/tmp_file -f
+    releases_tag=$(get_remote_tag)
+    if [[ -z "${releases_tag}" ]]; then
+        echo -e "${red}无法获取最新版本信息，请确认服务器能访问 GitHub API${plain}"
+        systemctl start xray-ui
+        return 1
+    fi
+    green "准备安装最新版本：${releases_tag}"
     mkdir -p /tmp/xray
     cd /tmp/xray
     if [ $# == 0 ]; then
-        wget --no-check-certificate -O /tmp/xray/xray-ui-linux-$(arch).tar.gz https://github.com/qist/xray-ui/releases/download/${releases_version}/xray-ui-linux-$(arch).tar.gz
+        wget --no-check-certificate -O /tmp/xray/xray-ui-linux-$(arch).tar.gz "${REPO_BASE}/releases/download/${releases_tag}/xray-ui-linux-$(arch).tar.gz"
         if [[ $? -ne 0 ]]; then
             echo -e "${red}下载 xray-ui 失败，请确保你的服务器能够下载 Github 的文件${plain}"
             rm -f install.sh
@@ -171,7 +183,7 @@ update() {
         fi
     else
         last_version=$1
-        url="https://github.com/qist/xray-ui/releases/download/${releases_version}/xray-ui-linux-$(arch).tar.gz"
+        url="${REPO_BASE}/releases/download/${releases_tag}/xray-ui-linux-$(arch).tar.gz"
         echo -e "开始安装 xray-ui v$1"
         wget --no-check-certificate -O /tmp/xray/xray-ui-linux-$(arch).tar.gz ${url}
         if [[ $? -ne 0 ]]; then
@@ -194,7 +206,7 @@ update() {
     fi
     chmod +x xray-ui bin/xray-linux-$(arch)
     \cp -f xray-ui.service /etc/systemd/system/
-    wget --no-check-certificate -O /usr/bin/xray-ui https://raw.githubusercontent.com/qist/xray-ui/main/xray-ui.sh
+    wget --no-check-certificate -O /usr/bin/xray-ui "${REPO_RAW}/xray-ui.sh"
     chmod +x /usr/bin/xray-ui
     #chmod +x /usr/local/xray-ui/xray-ui.sh
     systemctl daemon-reload
@@ -491,7 +503,7 @@ crontab() {
 }
 
 update_shell() {
-    wget --no-check-certificate -O /usr/bin/xray-ui https://raw.githubusercontent.com/qist/xray-ui/main/xray-ui.sh
+    wget --no-check-certificate -O /usr/bin/xray-ui "${REPO_RAW}/xray-ui.sh"
     if [[ $? != 0 ]]; then
         echo ""
         echo -e "${red}下载脚本失败，请检查本机能否连接 Github${plain}"
@@ -500,6 +512,95 @@ update_shell() {
         chmod +x /usr/bin/xray-ui
         echo -e "${green}升级脚本成功，请重新运行脚本${plain}" && exit 0
     fi
+}
+
+# ================= 版本与更新检查 =================
+get_local_version() {
+    local v
+    v=$(/usr/local/xray-ui/xray-ui -v 2>/dev/null | head -n 1 | tr -d '[:space:]')
+    if [[ -z "${v}" ]]; then
+        v=$(head -n 1 /usr/local/xray-ui/config/version 2>/dev/null | tr -d '[:space:]')
+    fi
+    echo "${v#v}"
+}
+
+get_remote_tag() {
+    local cache="${UPDATE_CHECK_CACHE}"
+    local tag=""
+    local mtime=0
+    if [[ -f "${cache}" ]]; then
+        mtime=$(stat -c %Y "${cache}" 2>/dev/null || echo 0)
+        if [[ "${mtime}" =~ ^[0-9]+$ && ${mtime} -gt 0 ]]; then
+            if [[ $(( $(date +%s) - mtime )) -lt ${UPDATE_CHECK_TTL} ]]; then
+                tag=$(head -n 1 "${cache}" 2>/dev/null | tr -d '[:space:]')
+                if [[ -n "${tag}" ]]; then
+                    echo "${tag}"
+                    return 0
+                fi
+            fi
+        fi
+    fi
+    tag=$(curl -fsSL --max-time 10 --retry 2 -H "Accept: application/vnd.github.v3+json" \
+        "${GITHUB_API}/releases/latest" 2>/dev/null \
+        | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' \
+        | head -n 1 \
+        | sed 's/.*"\([^"]*\)"$/\1/')
+    if [[ -n "${tag}" ]]; then
+        echo "${tag}" >"${cache}" 2>/dev/null || true
+    fi
+    echo "${tag}"
+}
+
+get_remote_version() {
+    local t
+    t=$(get_remote_tag)
+    echo "${t#v}"
+}
+
+version_gt() {
+    # version_gt 26.11.18 26.10.31 返回 0（前者更新）
+    local a="$1" b="$2"
+    [[ "${a}" == "${b}" ]] && return 1
+    [[ -z "${a}" ]] && return 1
+    local oldIFS=$IFS
+    IFS='.'
+    local -a av bv
+    av=(${a//[^0-9.]/})
+    bv=(${b//[^0-9.]/})
+    IFS=$oldIFS
+    local i x y n=${#av[@]}
+    [[ ${#bv[@]} -gt ${n} ]] && n=${#bv[@]}
+    for ((i = 0; i < n; i++)); do
+        x=${av[i]:-0}
+        y=${bv[i]:-0}
+        [[ -z "${x}" ]] && x=0
+        [[ -z "${y}" ]] && y=0
+        if ((10#${x} > 10#${y})); then
+            return 0
+        fi
+        if ((10#${x} < 10#${y})); then
+            return 1
+        fi
+    done
+    return 1
+}
+
+show_update_status() {
+    local localV remoteTag remoteV
+    localV=$(get_local_version)
+    remoteTag=$(get_remote_tag)
+    remoteV="${remoteTag#v}"
+    if [[ -z "${remoteTag}" ]]; then
+        yellow "当前安装版本：${localV:-未知}（更新检查失败：无法访问 GitHub API）"
+        return 2
+    fi
+    if version_gt "${remoteV}" "${localV}"; then
+        green "当前安装版本：${localV}"
+        yellow "检测到新版本：${remoteTag} ，可选择 2 进行更新（或执行 xray-ui update）"
+        return 0
+    fi
+    green "已安装最新版本：${localV}（仓库最新：${remoteTag}）"
+    return 1
 }
 
 # 0: running, 1: not running, 2: not installed
@@ -1225,6 +1326,7 @@ show_usage() {
     echo "xray-ui ssl_CF       - Cloudflare SSL 证书"
     echo "xray-ui crontab      - 添加geoip到任务计划每天凌晨1.30执行"
     echo "xray-ui nginx_proxy  - nginx 一键反代面板到外网"
+    echo "xray-ui check_update - 检查是否有新版本"
     echo "xray-ui uninstall    - 卸载 xray-ui 面板"
     echo "------------------------------------------"
 }
@@ -1262,6 +1364,7 @@ show_menu() {
   ${green}22.${plain} 重置ssl证书
   ${green}23.${plain} 重置mTLS证书
   ${green}24.${plain} nginx 反代面板到外网
+  ${green}25.${plain} 检查更新
  "
     show_status
     echo "------------------------------------------"
@@ -1272,19 +1375,9 @@ show_menu() {
     yellow "当前面板http只支持127.0.0.1访问如果外面访问请用ssh转发或者nginx代理或者xray-ui 配置证书 选择22配置证书 xray-ui ip_ssl_main"
     fi
     echo "------------------------------------------"
-    uiV=$(/usr/local/xray-ui/xray-ui -v)
-    curl -sS -H "Accept: application/vnd.github.v3+json" -o "/tmp/tmp_file" 'https://api.github.com/repos/qist/xray-ui/releases/latest'
-    remoteV=($(sed 'y/,/\n/' "/tmp/tmp_file" | grep 'tag_name' | awk -F '"' '{print $4}'))
-    rm /tmp/tmp_file -f
-    localV=${uiV}
-    if [ "${localV}" = "${remoteV}" ]; then
-        green "已安装最新版本：${uiV} ，如有更新，此处会自动提示"
-    else
-        green "当前安装的版本：${uiV}"
-        yellow "检测到最新版本：${remoteV} ，可选择2进行更新！"
-    fi
+    show_update_status
 
-    echo && read -p "请输入选择 [0-24]: " num
+    echo && read -p "请输入选择 [0-25]: " num
 
     case "${num}" in
     0)
@@ -1362,8 +1455,11 @@ show_menu() {
     24)
         check_install && nginx_proxy
         ;;
+    25)
+        check_install && { show_update_status; before_show_menu; }
+        ;;
     *)
-        echo -e "${red}请输入正确的数字 [0-24]${plain}"
+        echo -e "${red}请输入正确的数字 [0-25]${plain}"
         ;;
     esac
 }
@@ -1414,6 +1510,10 @@ if [[ $# > 0 ]]; then
         ;;
     "nginx_proxy")
         nginx_proxy
+        ;;
+    "check_update" | "check-update")
+        check_install 0 && show_update_status
+        exit 0
         ;;
     "ssl_main")
         ssl_cert_issue_main

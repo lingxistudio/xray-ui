@@ -10,7 +10,11 @@ bblue='\033[0;34m'
 plain='\033[0m'
 
 resolve_release_source() {
-    local candidate_owners=("lingxistudio" "qist")
+    # 优先使用本仓库（可用 REPO_OWNER 覆盖）；设置 ALLOW_UPSTREAM_FALLBACK=1 时回退上游
+    local candidate_owners=("${REPO_OWNER:-lingxistudio}")
+    if [[ x"${ALLOW_UPSTREAM_FALLBACK}" == x"1" ]]; then
+        candidate_owners+=("qist")
+    fi
     local owner
     for owner in "${candidate_owners[@]}"; do
         local api_url="https://api.github.com/repos/${owner}/${REPO_NAME}/releases/latest"
